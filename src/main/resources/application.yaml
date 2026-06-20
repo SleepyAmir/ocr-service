@@ -1,0 +1,47 @@
+spring:
+  application:
+    name: ocr-service
+
+  data:
+    mongodb:
+      host: ${MONGO_HOST:localhost}
+      port: ${MONGO_PORT:27017}
+      database: ${MONGO_DB:platform_mongo}
+      auto-index-creation: true
+
+  servlet:
+    multipart:
+      enabled: true
+      # We store the uploaded file bytes in MongoDB like the professor's sample.
+      # Keep this safely below MongoDB's 16MB document limit.
+      max-file-size: ${OCR_MAX_FILE_SIZE:10MB}
+      max-request-size: ${OCR_MAX_REQUEST_SIZE:12MB}
+
+server:
+  port: ${OCR_SERVICE_PORT:8090}
+
+ocr:
+  tessdata-path: ${OCR_TESSDATA_PATH:}
+  # Changed default from "fas+eng" to "fas" — only fas.traineddata is bundled
+  # locally for now. Add eng.traineddata to src/main/resources/tessdata/ and
+  # switch this back to "fas+eng" (or pass OCR_LANGUAGE=fas+eng) once you have it.
+  language: ${OCR_LANGUAGE:fas}
+  pdf-dpi: ${OCR_PDF_DPI:250}
+
+springdoc:
+  swagger-ui:
+    path: /swagger-ui.html
+    enabled: true
+  api-docs:
+    path: /v3/api-docs
+    enabled: true
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+
+logging:
+  level:
+    com.example.ocrservice: DEBUG

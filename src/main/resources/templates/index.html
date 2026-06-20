@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="fa" dir="rtl" xmlns:th="http://www.thymeleaf.org">
+<head>
+    <meta charset="UTF-8">
+    <title>OCR Service — تست دستی</title>
+    <style>
+        * { box-sizing: border-box; }
+        body {
+            font-family: "Segoe UI", Tahoma, sans-serif;
+            background: #f4f6f8;
+            color: #1f2933;
+            margin: 0;
+            padding: 32px 16px;
+        }
+        .container {
+            max-width: 720px;
+            margin: 0 auto;
+        }
+        h1 {
+            font-size: 22px;
+            margin-bottom: 4px;
+        }
+        .subtitle {
+            color: #616e7c;
+            margin-bottom: 24px;
+            font-size: 14px;
+        }
+        .card {
+            background: #ffffff;
+            border: 1px solid #e4e7eb;
+            border-radius: 10px;
+            padding: 20px;
+            margin-bottom: 20px;
+        }
+        .card h2 {
+            font-size: 16px;
+            margin: 0 0 14px 0;
+        }
+        input[type="file"], input[type="text"] {
+            width: 100%;
+            padding: 10px;
+            border: 1px solid #cbd2d9;
+            border-radius: 6px;
+            font-size: 14px;
+            margin-bottom: 12px;
+            background: #fff;
+        }
+        button {
+            background: #2563eb;
+            color: #fff;
+            border: none;
+            padding: 10px 18px;
+            border-radius: 6px;
+            font-size: 14px;
+            cursor: pointer;
+        }
+        button:hover {
+            background: #1d4ed8;
+        }
+        .error {
+            background: #fef2f2;
+            border: 1px solid #fecaca;
+            color: #b91c1c;
+            padding: 10px 14px;
+            border-radius: 6px;
+            margin-bottom: 16px;
+            font-size: 14px;
+        }
+        .result-meta {
+            font-size: 13px;
+            color: #616e7c;
+            margin-bottom: 10px;
+        }
+        .result-text {
+            white-space: pre-wrap;
+            background: #f9fafb;
+            border: 1px solid #e4e7eb;
+            border-radius: 6px;
+            padding: 14px;
+            font-size: 14px;
+            line-height: 1.7;
+            max-height: 400px;
+            overflow-y: auto;
+        }
+        .search-item {
+            border-bottom: 1px solid #e4e7eb;
+            padding: 12px 0;
+        }
+        .search-item:last-child {
+            border-bottom: none;
+        }
+        .search-item .filename {
+            font-weight: 600;
+            font-size: 14px;
+            margin-bottom: 4px;
+        }
+        .search-item .snippet {
+            font-size: 13px;
+            color: #3e4c59;
+            background: #f9fafb;
+            border-radius: 4px;
+            padding: 6px 10px;
+            margin: 4px 0;
+        }
+        .empty {
+            color: #9aa5b1;
+            font-size: 14px;
+        }
+    </style>
+</head>
+<body>
+<div class="container">
+    <h1>سرویس OCR</h1>
+    <p class="subtitle">آپلود تصویر یا PDF برای استخراج متن، و جست‌وجوی کلمه‌ای در اسناد قبلی</p>
+
+    <div th:if="${error}" class="error" th:text="${error}"></div>
+
+    <div class="card">
+        <h2>۱. آپلود فایل و استخراج متن</h2>
+        <form method="post" th:action="@{/extract}" enctype="multipart/form-data">
+            <input type="file" name="file" accept="image/*,.pdf" required>
+            <button type="submit">تبدیل به متن</button>
+        </form>
+
+        <div th:if="${result != null}" style="margin-top:18px;">
+            <div class="result-meta">
+                <span th:text="${result.originalFileName()}"></span>
+                ·
+                <span th:text="${result.pageCount()} + ' صفحه'"></span>
+            </div>
+            <div class="result-text" th:text="${result.extractedText()}"></div>
+        </div>
+    </div>
+
+    <div class="card">
+        <h2>۲. جست‌وجوی کلمه در اسناد ذخیره‌شده</h2>
+        <form method="post" th:action="@{/search}">
+            <input type="text" name="keyword" placeholder="مثلاً: دانشگاه" th:value="${searchKeyword}" required>
+            <button type="submit">جست‌وجو</button>
+        </form>
+
+        <div th:if="${searchResults != null}" style="margin-top:18px;">
+            <p th:if="${#lists.isEmpty(searchResults)}" class="empty">نتیجه‌ای پیدا نشد.</p>
+
+            <div th:each="item : ${searchResults}" class="search-item">
+                <div class="filename" th:text="${item.originalFileName()}"></div>
+                <div class="snippet" th:each="snippet : ${item.snippets()}" th:text="${snippet}"></div>
+            </div>
+        </div>
+    </div>
+</div>
+</body>
+</html>
