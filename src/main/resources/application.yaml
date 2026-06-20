@@ -21,10 +21,14 @@ server:
   port: ${OCR_SERVICE_PORT:8090}
 
 ocr:
-  tessdata-path: ${OCR_TESSDATA_PATH:}
-  # Changed default from "fas+eng" to "fas" — only fas.traineddata is bundled
-  # locally for now. Add eng.traineddata to src/main/resources/tessdata/ and
-  # switch this back to "fas+eng" (or pass OCR_LANGUAGE=fas+eng) once you have it.
+  # Local dev default: a path RELATIVE to the working directory (same trick
+  # that worked in the main platform project) instead of relying on
+  # classloader.getResource("tessdata").getPath(), which returns a
+  # URL-style path (leading "/C:/...") that Tesseract's native library
+  # does not reliably parse on Windows — that mismatch is what caused
+  # "Error opening data file" / "Invalid memory access" here.
+  # In Docker, OCR_TESSDATA_PATH overrides this with the real install path.
+  tessdata-path: ${OCR_TESSDATA_PATH:src/main/resources/tessdata}
   language: ${OCR_LANGUAGE:fas}
   pdf-dpi: ${OCR_PDF_DPI:250}
 
