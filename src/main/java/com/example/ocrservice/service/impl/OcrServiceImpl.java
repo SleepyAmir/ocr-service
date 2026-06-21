@@ -1,12 +1,14 @@
 package com.example.ocrservice.service.impl;
 
-import com.example.ocrservice.document.OcrDocument;
+import com.example.ocrservice.document.OcrFile;
+import com.example.ocrservice.document.OcrResult;
 import com.example.ocrservice.dto.OcrDocumentResponse;
 import com.example.ocrservice.dto.OcrDocumentSummaryResponse;
 import com.example.ocrservice.dto.OcrFileResponse;
 import com.example.ocrservice.dto.OcrSearchResultResponse;
 import com.example.ocrservice.exception.ResourceNotFoundException;
-import com.example.ocrservice.repository.OcrDocumentRepository;
+import com.example.ocrservice.repository.OcrFileRepository;
+import com.example.ocrservice.repository.OcrResultRepository;
 import com.example.ocrservice.service.OcrService;
 import lombok.RequiredArgsConstructor;
 import net.sourceforge.tess4j.Tesseract;
@@ -23,18 +25,31 @@ import org.springframework.web.multipart.MultipartFile;
 import javax.imageio.ImageIO;
 import java.awt.image.BufferedImage;
 import java.io.ByteArrayInputStream;
+import java.io.File;
 import java.io.IOException;
+import java.net.URISyntaxException;
 import java.net.URL;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.regex.Pattern;
 
+/**
+ * Reads/writes are split across two collections, coordinated with the
+ * database team:
+ *   - OcrFile   ("ocr_files")   -> file metadata + raw bytes
+ *   - OcrResult ("ocr_results") -> extracted text, linked via fileId
+ *
+ * Each upload writes one OcrFile and one OcrResult (1:1, linked by fileId).
+ * The public DTOs (OcrDocumentResponse, etc.) are unchanged, so existing
+ * API consumers don't need to know about this internal split.
+ */
 @Service
 @RequiredArgsConstructor
 public class OcrServiceImpl implements OcrService {
 
-    private final OcrDocumentRepository repository;
+    private final OcrFileRepository fileRepository;
+    private final OcrResultRepository resultRepository;
 
     @Value("${ocr.tessdata-path:}")
     private String tessdataPath;
@@ -54,61 +69,81 @@ public class OcrServiceImpl implements OcrService {
         String contentType = file.getContentType();
         byte[] bytes = file.getBytes();
 
-        ExtractionResult result = extractText(bytes, contentType, file.getOriginalFilename());
+        ExtractionResult extraction = extractText(bytes, contentType, file.getOriginalFilename());
+        LocalDateTime now = LocalDateTime.now();
 
-        OcrDocument saved = repository.save(OcrDocument.builder()
+        OcrFile savedFile = fileRepository.save(OcrFile.builder()
                 .originalFileName(file.getOriginalFilename())
                 .contentType(normalizeContentType(contentType, file.getOriginalFilename()))
                 .fileSize(file.getSize())
-                .pageCount(result.pageCount())
+                .pageCount(extraction.pageCount())
                 .fileData(bytes)
-                .extractedText(result.text())
-                .createdAt(LocalDateTime.now())
+                .createdAt(now)
                 .build());
 
-        return toResponse(saved);
+        OcrResult savedResult = resultRepository.save(OcrResult.builder()
+                .fileId(savedFile.getId())
+                .extractedText(extraction.text())
+                .createdAt(now)
+                .build());
+
+        return toResponse(savedFile, savedResult);
     }
 
     @Override
     public OcrDocumentResponse getDocument(String id) {
-        return repository.findById(id)
-                .map(this::toResponse)
+        OcrFile file = fileRepository.findById(id)
                 .orElseThrow(() -> new ResourceNotFoundException("OCR document not found with id: " + id));
+
+        OcrResult result = resultRepository.findByFileId(id)
+                .orElseThrow(() -> new ResourceNotFoundException("OCR result not found for file id: " + id));
+
+        return toResponse(file, result);
     }
 
     @Override
     public OcrFileResponse getOriginalFile(String id) {
-        OcrDocument document = repository.findById(id)
+        OcrFile file = fileRepository.findById(id)
                 .orElseThrow(() -> new ResourceNotFoundException("OCR document not found with id: " + id));
 
         return new OcrFileResponse(
-                safeFileName(document),
-                document.getContentType(),
-                document.getFileData()
+                safeFileName(file),
+                file.getContentType(),
+                file.getFileData()
         );
     }
 
     @Override
     public Page<OcrDocumentSummaryResponse> getRecentDocuments(Pageable pageable) {
-        return repository.findAllByOrderByCreatedAtDesc(pageable).map(this::toSummaryResponse);
+        return fileRepository.findAllByOrderByCreatedAtDesc(pageable)
+                .map(this::toSummaryResponse);
     }
 
     @Override
     public OcrSearchResultResponse searchInsideDocument(String id, String keyword) {
         validateKeyword(keyword);
 
-        OcrDocument document = repository.findById(id)
+        OcrFile file = fileRepository.findById(id)
                 .orElseThrow(() -> new ResourceNotFoundException("OCR document not found with id: " + id));
 
-        return toSearchResponse(document, keyword);
+        OcrResult result = resultRepository.findByFileId(id)
+                .orElseThrow(() -> new ResourceNotFoundException("OCR result not found for file id: " + id));
+
+        return toSearchResponse(file, result, keyword);
     }
 
     @Override
     public Page<OcrSearchResultResponse> searchAllDocuments(String keyword, Pageable pageable) {
         validateKeyword(keyword);
         String escapedKeyword = Pattern.quote(keyword.trim());
-        return repository.searchByExtractedTextRegex(escapedKeyword, pageable)
-                .map(document -> toSearchResponse(document, keyword));
+
+        return resultRepository.searchByExtractedTextRegex(escapedKeyword, pageable)
+                .map(result -> {
+                    OcrFile file = fileRepository.findById(result.getFileId())
+                            .orElseThrow(() -> new ResourceNotFoundException(
+                                    "OCR file not found with id: " + result.getFileId()));
+                    return toSearchResponse(file, result, keyword);
+                });
     }
 
     private ExtractionResult extractText(byte[] bytes, String contentType, String fileName) {
@@ -162,14 +197,19 @@ public class OcrServiceImpl implements OcrService {
 
     private String resolveTessdataPath() {
         if (tessdataPath != null && !tessdataPath.isBlank()) {
-            return tessdataPath;
+            return new File(tessdataPath).getAbsolutePath();
         }
 
         URL resource = getClass().getClassLoader().getResource("tessdata");
         if (resource == null) {
             throw new RuntimeException("tessdata was not found. Set OCR_TESSDATA_PATH or add tessdata to classpath.");
         }
-        return resource.getPath();
+
+        try {
+            return new File(resource.toURI()).getAbsolutePath();
+        } catch (URISyntaxException e) {
+            return resource.getPath();
+        }
     }
 
     private boolean isPdf(String contentType, String fileName) {
@@ -211,43 +251,43 @@ public class OcrServiceImpl implements OcrService {
         }
     }
 
-    private String safeFileName(OcrDocument document) {
-        if (document.getOriginalFileName() != null && !document.getOriginalFileName().isBlank()) {
-            return document.getOriginalFileName();
+    private String safeFileName(OcrFile file) {
+        if (file.getOriginalFileName() != null && !file.getOriginalFileName().isBlank()) {
+            return file.getOriginalFileName();
         }
-        return "ocr-document-" + document.getId();
+        return "ocr-document-" + file.getId();
     }
 
-    private OcrDocumentResponse toResponse(OcrDocument document) {
+    private OcrDocumentResponse toResponse(OcrFile file, OcrResult result) {
         return new OcrDocumentResponse(
-                document.getId(),
-                document.getOriginalFileName(),
-                document.getContentType(),
-                document.getFileSize(),
-                document.getPageCount(),
-                document.getExtractedText(),
-                document.getCreatedAt()
+                file.getId(),
+                file.getOriginalFileName(),
+                file.getContentType(),
+                file.getFileSize(),
+                file.getPageCount(),
+                result.getExtractedText(),
+                file.getCreatedAt()
         );
     }
 
-    private OcrDocumentSummaryResponse toSummaryResponse(OcrDocument document) {
+    private OcrDocumentSummaryResponse toSummaryResponse(OcrFile file) {
         return new OcrDocumentSummaryResponse(
-                document.getId(),
-                document.getOriginalFileName(),
-                document.getContentType(),
-                document.getFileSize(),
-                document.getPageCount(),
-                document.getCreatedAt()
+                file.getId(),
+                file.getOriginalFileName(),
+                file.getContentType(),
+                file.getFileSize(),
+                file.getPageCount(),
+                file.getCreatedAt()
         );
     }
 
-    private OcrSearchResultResponse toSearchResponse(OcrDocument document, String keyword) {
+    private OcrSearchResultResponse toSearchResponse(OcrFile file, OcrResult result, String keyword) {
         return new OcrSearchResultResponse(
-                document.getId(),
-                document.getOriginalFileName(),
-                document.getPageCount(),
-                buildSnippets(document.getExtractedText(), keyword),
-                document.getCreatedAt()
+                file.getId(),
+                file.getOriginalFileName(),
+                file.getPageCount(),
+                buildSnippets(result.getExtractedText(), keyword),
+                file.getCreatedAt()
         );
     }
 
