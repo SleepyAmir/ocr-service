@@ -14,6 +14,11 @@ public interface OcrResultRepository extends MongoRepository<OcrResult, String> 
 
     Optional<OcrResult> findByFileId(String fileId);
 
-    @Query("{ 'extractedText': { $regex: ?0, $options: 'i' } }")
-    Page<OcrResult> searchByExtractedTextRegex(String keyword, Pageable pageable);
+    /**
+     * Searches the NORMALIZED text (not the raw extractedText) so DB hits match
+     * the same Persian/English-aware logic used by TextSearchService. The
+     * caller must pass an already-normalized + regex-escaped keyword.
+     */
+    @Query("{ 'normalizedText': { $regex: ?0, $options: 'i' } }")
+    Page<OcrResult> searchByNormalizedTextRegex(String keyword, Pageable pageable);
 }

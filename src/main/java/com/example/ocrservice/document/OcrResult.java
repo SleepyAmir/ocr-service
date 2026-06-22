@@ -39,6 +39,15 @@ public class OcrResult {
     @TextIndexed
     private String extractedText;
 
+    /**
+     * A normalized copy of {@link #extractedText} (see PersianTextNormalizer):
+     * Persian/Arabic letter variants unified, digits ASCII-fied, نیم‌فاصله and
+     * diacritics removed, English lower-cased. DB keyword search runs against
+     * THIS field so that database hits match the same way the Java snippet
+     * logic does — keeping the two consistent.
+     */
+    private String normalizedText;
+
     @Indexed
     private LocalDateTime createdAt;
 }

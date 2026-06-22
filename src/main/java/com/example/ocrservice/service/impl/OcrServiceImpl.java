@@ -11,6 +11,8 @@ import com.example.ocrservice.mapper.OcrMapper;
 import com.example.ocrservice.repository.OcrFileRepository;
 import com.example.ocrservice.repository.OcrResultRepository;
 import com.example.ocrservice.service.OcrService;
+import com.example.ocrservice.service.PersianTextNormalizer;
+import com.example.ocrservice.service.TextSearchService;
 import lombok.RequiredArgsConstructor;
 import net.sourceforge.tess4j.Tesseract;
 import org.apache.pdfbox.Loader;
@@ -31,6 +33,7 @@ import java.io.IOException;
 import java.net.URISyntaxException;
 import java.net.URL;
 import java.time.LocalDateTime;
+import java.util.List;
 import java.util.regex.Pattern;
 
 /**
@@ -54,6 +57,7 @@ public class OcrServiceImpl implements OcrService {
     private final OcrFileRepository fileRepository;
     private final OcrResultRepository resultRepository;
     private final OcrMapper ocrMapper;
+    private final TextSearchService textSearchService;
 
     @Value("${ocr.tessdata-path:}")
     private String tessdataPath;
@@ -88,6 +92,7 @@ public class OcrServiceImpl implements OcrService {
         OcrResult savedResult = resultRepository.save(OcrResult.builder()
                 .fileId(savedFile.getId())
                 .extractedText(extraction.text())
+                .normalizedText(PersianTextNormalizer.normalize(extraction.text()))
                 .createdAt(now)
                 .build());
 
@@ -129,20 +134,29 @@ public class OcrServiceImpl implements OcrService {
         OcrResult result = resultRepository.findByFileId(id)
                 .orElseThrow(() -> new ResourceNotFoundException("OCR result not found for file id: " + id));
 
-        return ocrMapper.toSearchResponse(file, result, keyword);
+        List<String> snippets = textSearchService.buildSnippets(result.getExtractedText(), keyword);
+        return ocrMapper.toSearchResponse(file, snippets);
     }
 
     @Override
     public Page<OcrSearchResultResponse> searchAllDocuments(String keyword, Pageable pageable) {
         validateKeyword(keyword);
-        String escapedKeyword = Pattern.quote(keyword.trim());
+        // Normalize the keyword the same way the stored text was normalized,
+        // then regex-escape it so it's matched literally against normalizedText.
+        String normalizedKeyword = PersianTextNormalizer.normalize(keyword).trim();
+        if (normalizedKeyword.isEmpty()) {
+            throw new IllegalArgumentException("keyword is required");
+        }
+        String escapedKeyword = Pattern.quote(normalizedKeyword);
 
-        return resultRepository.searchByExtractedTextRegex(escapedKeyword, pageable)
+        return resultRepository.searchByNormalizedTextRegex(escapedKeyword, pageable)
                 .map(result -> {
                     OcrFile file = fileRepository.findById(result.getFileId())
                             .orElseThrow(() -> new ResourceNotFoundException(
                                     "OCR file not found with id: " + result.getFileId()));
-                    return ocrMapper.toSearchResponse(file, result, keyword);
+                    List<String> snippets =
+                            textSearchService.buildSnippets(result.getExtractedText(), keyword);
+                    return ocrMapper.toSearchResponse(file, snippets);
                 });
     }
 

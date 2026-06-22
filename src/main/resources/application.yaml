@@ -29,7 +29,9 @@ ocr:
   # "Error opening data file" / "Invalid memory access" here.
   # In Docker, OCR_TESSDATA_PATH overrides this with the real install path.
   tessdata-path: ${OCR_TESSDATA_PATH:src/main/resources/tessdata}
-  language: ${OCR_LANGUAGE:fas}
+  # fas+eng so mixed Persian/English documents are read correctly.
+  # With only "fas", Tesseract mis-reads embedded English words/numbers.
+  language: ${OCR_LANGUAGE:fas+eng}
   pdf-dpi: ${OCR_PDF_DPI:250}
 
 springdoc:
