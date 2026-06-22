@@ -4,9 +4,14 @@ spring:
 
   data:
     mongodb:
-      host: ${MONGO_HOST:localhost}
-      port: ${MONGO_PORT:27017}
-      database: ${MONGO_DB:platform_mongo}
+      # Connection string. In Docker this is overridden by the
+      # SPRING_DATA_MONGODB_URI env var (mongodb://mongodb:27017/ocr_db).
+      # An explicit MongoClient bean (MongoConfig) also reads this value, so
+      # the connection is honored even if auto-config misbehaves on Boot 4.x.
+      uri: ${SPRING_DATA_MONGODB_URI:mongodb://localhost:27017/ocr_db}
+      # Database name must also be set explicitly because a custom MongoClient
+      # bean doesn't always carry the db name from the URI into Spring Data.
+      database: ${MONGO_DB:ocr_db}
       auto-index-creation: true
 
   servlet:
