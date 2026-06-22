@@ -7,6 +7,7 @@ import com.example.ocrservice.dto.OcrDocumentSummaryResponse;
 import com.example.ocrservice.dto.OcrFileResponse;
 import com.example.ocrservice.dto.OcrSearchResultResponse;
 import com.example.ocrservice.exception.ResourceNotFoundException;
+import com.example.ocrservice.mapper.OcrMapper;
 import com.example.ocrservice.repository.OcrFileRepository;
 import com.example.ocrservice.repository.OcrResultRepository;
 import com.example.ocrservice.service.OcrService;
@@ -30,8 +31,6 @@ import java.io.IOException;
 import java.net.URISyntaxException;
 import java.net.URL;
 import java.time.LocalDateTime;
-import java.util.ArrayList;
-import java.util.List;
 import java.util.regex.Pattern;
 
 /**
@@ -43,6 +42,10 @@ import java.util.regex.Pattern;
  * Each upload writes one OcrFile and one OcrResult (1:1, linked by fileId).
  * The public DTOs (OcrDocumentResponse, etc.) are unchanged, so existing
  * API consumers don't need to know about this internal split.
+ *
+ * DTO conversion is delegated to OcrMapper (MapStruct) — this class only
+ * orchestrates OCR extraction and persistence, no manual "new XxxResponse(...)"
+ * construction here anymore.
  */
 @Service
 @RequiredArgsConstructor
@@ -50,6 +53,7 @@ public class OcrServiceImpl implements OcrService {
 
     private final OcrFileRepository fileRepository;
     private final OcrResultRepository resultRepository;
+    private final OcrMapper ocrMapper;
 
     @Value("${ocr.tessdata-path:}")
     private String tessdataPath;
@@ -87,7 +91,7 @@ public class OcrServiceImpl implements OcrService {
                 .createdAt(now)
                 .build());
 
-        return toResponse(savedFile, savedResult);
+        return ocrMapper.toDocumentResponse(savedFile, savedResult);
     }
 
     @Override
@@ -98,7 +102,7 @@ public class OcrServiceImpl implements OcrService {
         OcrResult result = resultRepository.findByFileId(id)
                 .orElseThrow(() -> new ResourceNotFoundException("OCR result not found for file id: " + id));
 
-        return toResponse(file, result);
+        return ocrMapper.toDocumentResponse(file, result);
     }
 
     @Override
@@ -106,17 +110,13 @@ public class OcrServiceImpl implements OcrService {
         OcrFile file = fileRepository.findById(id)
                 .orElseThrow(() -> new ResourceNotFoundException("OCR document not found with id: " + id));
 
-        return new OcrFileResponse(
-                safeFileName(file),
-                file.getContentType(),
-                file.getFileData()
-        );
+        return ocrMapper.toFileResponse(file);
     }
 
     @Override
     public Page<OcrDocumentSummaryResponse> getRecentDocuments(Pageable pageable) {
         return fileRepository.findAllByOrderByCreatedAtDesc(pageable)
-                .map(this::toSummaryResponse);
+                .map(ocrMapper::toSummaryResponse);
     }
 
     @Override
@@ -129,7 +129,7 @@ public class OcrServiceImpl implements OcrService {
         OcrResult result = resultRepository.findByFileId(id)
                 .orElseThrow(() -> new ResourceNotFoundException("OCR result not found for file id: " + id));
 
-        return toSearchResponse(file, result, keyword);
+        return ocrMapper.toSearchResponse(file, result, keyword);
     }
 
     @Override
@@ -142,7 +142,7 @@ public class OcrServiceImpl implements OcrService {
                     OcrFile file = fileRepository.findById(result.getFileId())
                             .orElseThrow(() -> new ResourceNotFoundException(
                                     "OCR file not found with id: " + result.getFileId()));
-                    return toSearchResponse(file, result, keyword);
+                    return ocrMapper.toSearchResponse(file, result, keyword);
                 });
     }
 
@@ -249,70 +249,6 @@ public class OcrServiceImpl implements OcrService {
         if (keyword == null || keyword.isBlank()) {
             throw new IllegalArgumentException("keyword is required");
         }
-    }
-
-    private String safeFileName(OcrFile file) {
-        if (file.getOriginalFileName() != null && !file.getOriginalFileName().isBlank()) {
-            return file.getOriginalFileName();
-        }
-        return "ocr-document-" + file.getId();
-    }
-
-    private OcrDocumentResponse toResponse(OcrFile file, OcrResult result) {
-        return new OcrDocumentResponse(
-                file.getId(),
-                file.getOriginalFileName(),
-                file.getContentType(),
-                file.getFileSize(),
-                file.getPageCount(),
-                result.getExtractedText(),
-                file.getCreatedAt()
-        );
-    }
-
-    private OcrDocumentSummaryResponse toSummaryResponse(OcrFile file) {
-        return new OcrDocumentSummaryResponse(
-                file.getId(),
-                file.getOriginalFileName(),
-                file.getContentType(),
-                file.getFileSize(),
-                file.getPageCount(),
-                file.getCreatedAt()
-        );
-    }
-
-    private OcrSearchResultResponse toSearchResponse(OcrFile file, OcrResult result, String keyword) {
-        return new OcrSearchResultResponse(
-                file.getId(),
-                file.getOriginalFileName(),
-                file.getPageCount(),
-                buildSnippets(result.getExtractedText(), keyword),
-                file.getCreatedAt()
-        );
-    }
-
-    private List<String> buildSnippets(String text, String keyword) {
-        List<String> snippets = new ArrayList<>();
-        if (text == null || keyword == null || keyword.isBlank()) {
-            return snippets;
-        }
-
-        String lowerText = text.toLowerCase();
-        String lowerKeyword = keyword.toLowerCase().trim();
-        int fromIndex = 0;
-
-        while (snippets.size() < 5) {
-            int index = lowerText.indexOf(lowerKeyword, fromIndex);
-            if (index < 0) {
-                break;
-            }
-            int start = Math.max(0, index - 60);
-            int end = Math.min(text.length(), index + keyword.length() + 60);
-            snippets.add(text.substring(start, end).replaceAll("\\s+", " ").trim());
-            fromIndex = index + lowerKeyword.length();
-        }
-
-        return snippets;
     }
 
     private record ExtractionResult(String text, int pageCount) {
